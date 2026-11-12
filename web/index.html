@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>LIVI Music</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="config.js"></script>
+  <script defer src="metadata.bundle.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="wordmark">LIVI / MUSIC</p>
+      <h1>Music library</h1>
+      <p>Connect, preview and transfer your music to LIVI.</p>
+    </header>
+
+    <div class="workspace">
+    <section class="connection" aria-labelledby="connect-heading">
+      <h2 id="connect-heading">Connect to LIVI</h2>
+      <p>On LIVI, open Local Music and select Wireless sync. Enter its six-digit code below.</p>
+      <form id="connect-form">
+        <label for="pairing-code">Pairing code</label>
+        <input id="pairing-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+               autocomplete="one-time-code" placeholder="000000" required>
+        <details id="connection-settings">
+          <summary>Connection settings</summary>
+          <label for="signal-url">Signaling server URL</label>
+          <input id="signal-url" type="url" placeholder="wss://example.com/signal" required>
+          <p>Use the same server configured on LIVI. HTTPS hosting and WSS are required except on localhost.</p>
+        </details>
+        <div class="actions">
+          <button id="connect" type="submit">Connect</button>
+          <button id="disconnect" type="button" class="secondary" disabled>Disconnect</button>
+        </div>
+      </form>
+      <p id="status" role="status" aria-live="polite">Not connected.</p>
+      <p id="verification" class="verification" hidden></p>
+    </section>
+
+    <section id="library" class="library" aria-labelledby="library-heading" hidden>
+      <div class="section-title">
+        <h2 id="library-heading">Internal music</h2>
+        <button id="refresh" type="button" class="secondary">Refresh</button>
+      </div>
+      <p id="location" class="path">/</p>
+      <ul id="entries" class="entries"></ul>
+      <div class="uploads">
+        <label for="files">Choose files</label>
+        <input id="files" type="file" multiple
+               accept=".mp3,.flac,.wav,.wave,.aac,.m4a,.ogg,.opus,.m3u,.m3u8">
+        <label for="folder">Or choose a folder</label>
+        <input id="folder" type="file" webkitdirectory multiple>
+        <p>Files are added to the folder shown above. Existing files are never overwritten.</p>
+        <div id="selection" class="selection" hidden>
+          <div class="section-title">
+            <h3>Selected files</h3>
+            <span id="selection-count"></span>
+          </div>
+          <ul id="selection-list" class="selection-list"></ul>
+          <div id="preview" class="preview" hidden>
+            <img id="preview-artwork" alt="Album artwork" hidden>
+            <div class="preview-details">
+              <p id="preview-title" class="preview-title"></p>
+              <p id="preview-artist"></p>
+              <p id="preview-album"></p>
+              <p id="preview-note" class="preview-note"></p>
+              <audio id="preview-audio" preload="metadata"></audio>
+              <div id="preview-player" class="preview-player" hidden>
+                <button id="preview-play" type="button" class="secondary">Play</button>
+                <input id="preview-seek" type="range" min="0" max="1" value="0" step="0.01"
+                       aria-label="Preview position">
+                <span id="preview-time">0:00 / 0:00</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button id="upload" type="button">Upload selected music</button>
+      </div>
+      <div id="progress-area" hidden>
+        <label for="progress" id="progress-label">Uploading</label>
+        <progress id="progress" value="0" max="1"></progress>
+      </div>
+      <p id="message" role="status" aria-live="polite"></p>
+    </section>
+    </div>
+  </main>
+</body>
+</html>
