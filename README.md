@@ -2,49 +2,48 @@
 
 Wireless music transfer for [LIVI](https://github.com/DrSkunk/LIVI): a static
 web page that sends music files from a phone or computer straight into the LIVI
-library over WebRTC, and the small signaling relay that introduces the two
-peers.
+library over WebRTC.
 
 ```
- browser (GitHub Pages)                         LIVI head unit
-        │  1. join room "123456" ──► signal ◄── join room "123456"  │
-        │  2. SDP offer ───────────► relay  ──► SDP offer           │
-        │  3. SDP answer ◄────────── (WSS)  ◄── SDP answer          │
-        │                                                           │
-        └──────── 4. WebRTC data channel (music files) ─────────────┘
-                     direct, or via STUN-discovered / TURN-relayed path
+ browser (GitHub Pages)                              LIVI head unit
+        │  PeerJS offer ──────────────► PeerJS ◄───── WSS/heartbeat │
+        │  PeerJS answer ◄───────────── Cloud  ────── WSS           │
+        │                                                            │
+        └────────── WebRTC data channel (music files) ───────────────┘
+                      direct or through TURN
 ```
 
-- **STUN** only tells each peer its public address; **TURN** relays the data if
-  no direct path works. Neither can exchange the initial offer/answer, so a
-  signaling relay is always required. Static hosting (GitHub Pages) cannot run
-  it.
-- The relay only forwards connection descriptions (a few KiB). Music never
-  passes through it.
-- Pairing uses a six-digit room code shown on LIVI, a verification code derived
-  from both DTLS fingerprints, and an explicit **Allow** tap on LIVI.
+- The browser and LIVI use the free, shared PeerJS Cloud service at
+  `0.peerjs.com` to exchange WebRTC connection details. No signaling service
+  needs to be deployed. The service does not carry music.
+- PeerJS supplies public STUN and TURN defaults. Music travels directly when
+  possible and through TURN when necessary. These shared services are best
+  effort, with no uptime guarantee.
+- LIVI generates a random PeerJS ID for each pairing and puts it in the page
+  link's URL fragment. The fragment is not sent to GitHub Pages. Pairing still
+  requires the six-digit code, matching fingerprint verification codes, and an
+  explicit **Allow** tap on LIVI.
+- PeerJS Cloud is public infrastructure. A random ID makes unsolicited
+  connections hard to guess, but do not approve a mismatched verification code.
 
 ## Layout
 
-| Path      | Contents                                                     |
-| --------- | ------------------------------------------------------------ |
-| `web/`    | Static client (vanilla JS, bundled metadata reader and Inter) |
-| `signal/` | `livi-music-signal`, the Rust WebSocket signaling relay      |
+`web/` contains the static client, bundled metadata reader and Inter.
 
 ## Website (GitHub Pages)
 
 `.github/workflows/pages.yml` tests and builds `web/` and deploys it to GitHub
-Pages on every push to `main`. Configure it with repository **variables**
-(Settings → Secrets and variables → Actions → Variables):
+Pages on every push to `main`. No signaling URL or server credentials are
+required. Optionally set this repository **variable** (Settings → Secrets and
+variables → Actions → Variables) to override PeerJS's default ICE servers:
 
-| Variable                   | Example                                              |
-| -------------------------- | ---------------------------------------------------- |
-| `LIVI_MUSIC_SIGNALING_URL` | `wss://signal.example.net/signal` (must be `wss://`) |
-| `LIVI_MUSIC_ICE_SERVERS`   | `[{"urls":["stun:stun.l.google.com:19302"]}]`        |
+| Variable                 | Example                                              |
+| ------------------------ | ---------------------------------------------------- |
+| `LIVI_MUSIC_ICE_SERVERS` | `[{"urls":["stun:stun.l.google.com:19302"]}]`        |
 
-Without `LIVI_MUSIC_ICE_SERVERS` the page uses Google's public STUN server.
-The generated `config.js` is public: never put long-lived TURN credentials in
-it. Users can still type another signaling URL in the page.
+Without that variable, the page uses PeerJS's bundled STUN/TURN defaults. The
+generated `config.js` is public: never put private or long-lived TURN
+credentials in it.
 
 Local development:
 
@@ -56,51 +55,28 @@ npm run build          # writes dist/
 npx serve dist         # any static server works
 ```
 
-## Signaling relay
-
-`.github/workflows/signal.yml` runs `cargo fmt`, `clippy` and tests, then
-publishes a multi-arch image to `ghcr.io/drskunk/livi-music-signal` on pushes to
-`main` and `v*` tags.
-
-```sh
-docker run -p 8787:8787 ghcr.io/drskunk/livi-music-signal:latest
-```
-
-The relay listens on `LIVI_MUSIC_SIGNAL_LISTEN` when set, otherwise on
-`0.0.0.0:$PORT` when `PORT` is set, otherwise on `127.0.0.1:8787`. The image sets
-`PORT=8787`, so platforms that assign `PORT` (Fly.io, Render, Cloud Run)
-override it automatically. Endpoints:
-
-- `GET /signal` — WebSocket signaling
-- `GET /healthz` — health check
-
-Host it anywhere that terminates TLS with a publicly trusted certificate (LIVI
-verifies it against the WebPKI roots) and passes WebSocket upgrades. The
-per-IP attempt limit sees the proxy's address when proxied, so also rate-limit
-at the proxy if needed.
-
-Build from source (Rust 1.88+):
-
-```sh
-cd signal
-cargo build --release
-```
-
 ## Configuring LIVI
 
-On LIVI OS, write `/data/livi/config/LIVI/music-sync.json` (mode `0600`, owner
-`livi` if it contains TURN credentials):
+On LIVI OS, optionally write `/data/livi/config/LIVI/music-sync.json` (mode
+`0600`, owner `livi` if it contains TURN credentials):
 
 ```json
 {
-  "signalUrl": "wss://signal.example.net/signal",
   "webUrl": "https://drskunk.github.io/livi-music/",
-  "iceServers": [{ "urls": ["stun:stun.l.google.com:19302"] }]
+  "iceServers": []
 }
 ```
 
-Then open **Media → Local Music → Wireless sync** on LIVI, open the website,
-enter the pairing code, compare the verification codes and tap **Allow**.
+`webUrl` defaults to the GitHub Pages site above. PeerJS's public ICE defaults
+are used when `iceServers` is omitted or empty; optional custom ICE entries use
+`{"urls":["turn:relay.example.net:3478"],"username":"...","credential":"..."}`.
+Both devices must be able to reach PeerJS Cloud. `LIVI_MUSIC_WEB_URL` and JSON
+`LIVI_MUSIC_ICE_SERVERS` can override the file values.
+
+Open **Media → Local Music → Wireless sync** on LIVI and open the full link it
+shows on the phone or computer. Enter the six-digit code, compare the
+verification codes and tap **Allow** only if they match. The pairing window
+lasts five minutes and permits one browser.
 
 ## License
 

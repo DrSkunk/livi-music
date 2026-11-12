@@ -1,17 +1,19 @@
 "use strict";
 
+import { Peer } from "peerjs";
+import { verificationCode } from "./verification.js";
+
 (() => {
   const $ = (id) => document.getElementById(id);
   const config = window.LIVI_MUSIC_CONFIG || {};
   const fields = {
     form: $("connect-form"),
     code: $("pairing-code"),
-    signal: $("signal-url"),
-    settings: $("connection-settings"),
     connect: $("connect"),
     disconnect: $("disconnect"),
     status: $("status"),
     verification: $("verification"),
+    verificationCode: $("verification-code"),
     library: $("library"),
     location: $("location"),
     entries: $("entries"),
@@ -47,7 +49,6 @@
   };
   let connection = null;
   let channel = null;
-  let signal = null;
   let approved = false;
   let uploading = false;
   let currentPath = "";
@@ -58,9 +59,6 @@
   let audioUrl = null;
   const pending = new Map();
 
-  fields.signal.value = config.signalingUrl || "";
-  fields.settings.open = !fields.signal.value;
-
   function displayStatus(text) {
     fields.status.textContent = text;
   }
@@ -68,17 +66,14 @@
   function stop(reason) {
     const oldChannel = channel;
     const oldConnection = connection;
-    const oldSignal = signal;
     channel = null;
     connection = null;
-    signal = null;
     approved = false;
     uploading = false;
     uploadGeneration++;
     fields.previewAudio.pause();
     if (oldChannel) oldChannel.close();
-    if (oldConnection) oldConnection.close();
-    if (oldSignal) oldSignal.close();
+    if (oldConnection) oldConnection.destroy();
     for (const { reject, timer } of pending.values()) {
       clearTimeout(timer);
       reject(new Error(reason));
@@ -95,54 +90,20 @@
     displayStatus(reason);
   }
 
-  function validateSignalUrl(value) {
-    const url = new URL(value);
-    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-    if (url.username || url.password || (url.protocol !== "wss:" && !(loopback && url.protocol === "ws:"))) {
-      throw new Error("Use a wss:// signaling URL, or ws:// on localhost for testing.");
+  function peerIdFromLink() {
+    const peerId = location.hash.slice(1);
+    if (!/^[A-Za-z0-9]+(?:[ _-][A-Za-z0-9]+)*$/.test(peerId) || peerId.length > 128) {
+      throw new Error("Open the LIVI Music link shown on LIVI to select the correct device.");
     }
-    return url.href;
-  }
-
-  function fingerprint(sdp) {
-    const matches = [...sdp.matchAll(/^a=fingerprint:sha-256\s+([0-9a-f:]+)\r?$/gim)]
-      .map((match) => match[1].replaceAll(":", "").toUpperCase());
-    if (!matches.length || matches.some((item) => item.length !== 64 || item !== matches[0])) {
-      throw new Error("The connection did not provide a valid peer fingerprint.");
-    }
-    return matches[0];
+    return peerId;
   }
 
   function toHex(bytes) {
     return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
-  async function verificationCode(offer, answer) {
-    const text = `${fingerprint(offer)}\n${fingerprint(answer)}`;
-    const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-    return toHex(new Uint8Array(hash)).slice(0, 8).toUpperCase();
-  }
-
-  function waitForIce(peer) {
-    if (peer.iceGatheringState === "complete") return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        peer.removeEventListener("icegatheringstatechange", changed);
-        reject(new Error("Timed out gathering network addresses."));
-      }, 30000);
-      function changed() {
-        if (peer.iceGatheringState !== "complete") return;
-        clearTimeout(timer);
-        peer.removeEventListener("icegatheringstatechange", changed);
-        resolve();
-      }
-      peer.addEventListener("icegatheringstatechange", changed);
-      changed();
-    });
-  }
-
   function request(type, payload = {}) {
-    if (!approved || !channel || channel.readyState !== "open") {
+    if (!approved || !channel || !channel.open) {
       return Promise.reject(new Error("LIVI is not connected."));
     }
     const id = ++sequence;
@@ -162,6 +123,20 @@
     });
   }
 
+  async function showVerification() {
+    const data = channel;
+    const pc = data?.peerConnection;
+    try {
+      const code = await verificationCode(pc?.localDescription?.sdp, pc?.remoteDescription?.sdp);
+      if (channel !== data) return;
+      fields.verificationCode.textContent = code;
+      fields.verification.hidden = false;
+      displayStatus("Waiting for approval on LIVI.");
+    } catch (error) {
+      if (channel === data) stop(`Cannot verify this connection: ${error.message}`);
+    }
+  }
+
   function receive(message) {
     let response;
     try {
@@ -171,7 +146,7 @@
       return;
     }
     if (response.type === "pending") {
-      displayStatus("Waiting for approval on LIVI.");
+      showVerification();
       return;
     }
     if (response.type === "approved") {
@@ -201,78 +176,52 @@
     if (!window.isSecureContext || !crypto.subtle) {
       throw new Error("Open this page over HTTPS or localhost.");
     }
-    const endpoint = validateSignalUrl(fields.signal.value.trim());
+    const peerId = peerIdFromLink();
     const code = fields.code.value.trim();
     if (!/^[0-9]{6}$/.test(code)) throw new Error("Enter the six-digit pairing code.");
 
     fields.connect.disabled = true;
     fields.disconnect.disabled = false;
     fields.verification.hidden = true;
-    displayStatus("Connecting to the signaling server...");
-    const peer = new RTCPeerConnection({ iceServers: config.iceServers || [] });
-    const data = peer.createDataChannel("livi-music", { ordered: true });
-    data.binaryType = "arraybuffer";
-    data.bufferedAmountLowThreshold = 64 * 1024;
-    const socket = new WebSocket(endpoint);
+    displayStatus("Connecting to PeerJS...");
+    const peer = new Peer(undefined, {
+      host: "0.peerjs.com",
+      port: 443,
+      path: "/",
+      secure: true,
+      pingInterval: 5000,
+      debug: 0,
+      ...(config.iceServers?.length ? { config: { iceServers: config.iceServers } } : {}),
+    });
     connection = peer;
-    channel = data;
-    signal = socket;
-    let answered = false;
-
-    data.onopen = () => {
+    peer.on("error", (error) => {
+      if (connection === peer) stop(`PeerJS connection failed: ${error.message}`);
+    });
+    peer.on("open", () => {
       if (connection !== peer) return;
-      displayStatus("Connected. Waiting for LIVI to request approval.");
-      data.send(JSON.stringify({ type: "hello", code }));
-    };
-    data.onmessage = (event) => {
-      if (connection === peer) receive(event.data);
-    };
-    data.onclose = () => {
-      if (connection === peer) stop("The LIVI connection closed.");
-    };
-    data.onerror = () => {
-      if (connection === peer) stop("The LIVI data connection failed.");
-    };
-    peer.onconnectionstatechange = () => {
-      if (connection === peer && ["failed", "closed"].includes(peer.connectionState)) {
-        stop("The peer connection failed or closed.");
-      }
-    };
-    socket.onopen = () => socket.send(JSON.stringify({ role: "browser", code }));
-    socket.onerror = () => {
-      if (connection === peer && !answered) stop("Could not reach the signaling server.");
-    };
-    socket.onclose = () => {
-      if (connection === peer && !answered) stop("The signaling connection closed before pairing.");
-    };
-    socket.onmessage = async (event) => {
-      if (connection !== peer) return;
-      try {
-        const message = JSON.parse(event.data);
-        if (message.type === "joined") {
-          const offer = await peer.createOffer();
-          await peer.setLocalDescription(offer);
-          await waitForIce(peer);
-          if (connection !== peer) return;
-          socket.send(JSON.stringify({ type: "offer", sdp: peer.localDescription.sdp }));
-          displayStatus("Connecting to LIVI...");
-        } else if (message.type === "answer") {
-          answered = true;
-          await peer.setRemoteDescription({ type: "answer", sdp: message.sdp });
-          const code = await verificationCode(peer.localDescription.sdp, message.sdp);
-          if (connection !== peer) return;
-          fields.verification.textContent = `Check that ${code} also appears on LIVI, then tap Allow there.`;
-          fields.verification.hidden = false;
-          socket.close();
-        } else if (message.type === "error") {
-          stop(message.message || "Signaling failed.");
-        } else if (message.type === "peer-left" && !answered) {
-          stop("LIVI disconnected before pairing.");
-        }
-      } catch (error) {
-        stop(`Could not establish the connection: ${error.message}`);
-      }
-    };
+      const data = peer.connect(peerId, {
+        label: "livi-music",
+        reliable: true,
+        serialization: "raw",
+      });
+      channel = data;
+      data.on("open", () => {
+        if (connection !== peer) return;
+        if (data.dataChannel) data.dataChannel.bufferedAmountLowThreshold = 64 * 1024;
+        displayStatus("Connected. Waiting for approval on LIVI.");
+        data.send(JSON.stringify({ type: "hello", code }));
+      });
+      data.on("data", (message) => {
+        if (connection === peer) receive(message);
+      });
+      data.on("close", () => {
+        if (connection === peer) stop("The LIVI connection closed.");
+      });
+      data.on("error", (error) => {
+        if (connection === peer) stop(`The LIVI data connection failed: ${error.message}`);
+      });
+      displayStatus("Connecting to LIVI...");
+    });
   }
 
   function showError(error) {
@@ -460,7 +409,8 @@
     fields.progress.max = Math.max(file.size, 1);
     fields.progress.value = ready.offset;
     fields.progressLabel.textContent = path;
-    const data = channel;
+    const data = channel?.dataChannel;
+    if (!data) throw new Error("The LIVI data connection is not ready.");
     for (let offset = ready.offset; offset < file.size; offset += ready.chunkSize) {
       const chunk = new Uint8Array(await file.slice(offset, offset + ready.chunkSize).arrayBuffer());
       digest = await advanceDigest(digest, chunk);

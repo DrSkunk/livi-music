@@ -36,7 +36,6 @@ jobs:
 
       - name: Build
         env:
-          LIVI_MUSIC_SIGNALING_URL: ${{ vars.LIVI_MUSIC_SIGNALING_URL }}
           LIVI_MUSIC_ICE_SERVERS: ${{ vars.LIVI_MUSIC_ICE_SERVERS }}
         run: npm run build
 
