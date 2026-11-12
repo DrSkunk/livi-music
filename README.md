@@ -66,9 +66,10 @@ publishes a multi-arch image to `ghcr.io/drskunk/livi-music-signal` on pushes to
 docker run -p 8787:8787 ghcr.io/drskunk/livi-music-signal:latest
 ```
 
-The relay listens on `LIVI_MUSIC_SIGNAL_LISTEN` (default `127.0.0.1:8787`; the
-image uses `0.0.0.0:8787`), or on `0.0.0.0:$PORT` when only `PORT` is set, as on
-Fly.io, Render or Cloud Run. Endpoints:
+The relay listens on `LIVI_MUSIC_SIGNAL_LISTEN` when set, otherwise on
+`0.0.0.0:$PORT` when `PORT` is set, otherwise on `127.0.0.1:8787`. The image sets
+`PORT=8787`, so platforms that assign `PORT` (Fly.io, Render, Cloud Run)
+override it automatically. Endpoints:
 
 - `GET /signal` — WebSocket signaling
 - `GET /healthz` — health check

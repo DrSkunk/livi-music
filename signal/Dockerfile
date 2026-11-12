@@ -7,7 +7,7 @@ RUN cargo build --release --locked
 
 FROM scratch
 COPY --from=build /src/target/release/livi-music-signal /livi-music-signal
-ENV LIVI_MUSIC_SIGNAL_LISTEN=0.0.0.0:8787
+ENV PORT=8787
 EXPOSE 8787
 USER 65534:65534
 ENTRYPOINT ["/livi-music-signal"]
